@@ -65,9 +65,10 @@ static StreamSet meanwhile(void (*f)(void*), void *ctx) {
 	};
 }
 
-typedef void (*StreamAct)(int);
+typedef void (*StreamAct)(int, void*);
 typedef struct {
 	StreamAct in, out;
+	void *in_ctx, *out_ctx;
 } StreamActions;
 
 static void handle_streams(StreamSet streams, StreamActions actions) {
@@ -76,12 +77,12 @@ static void handle_streams(StreamSet streams, StreamActions actions) {
 		die("fork")
 	else if(writer_pid == 0) {
 		close(streams.in);
-		actions.out(streams.out);
+		actions.out(streams.out, actions.out_ctx);
 		exit(0);
 	}
 
 	close(streams.out);
-	actions.in(streams.in);
+	actions.in(streams.in, actions.in_ctx);
 }
 
 static void execute(void *_args) {
@@ -92,9 +93,9 @@ static void execute(void *_args) {
 	exit(1);
 }
 
-static void handle_input(int fd){
+static void handle_input(int fd, void *ctx){
 	while(1) {
-		int input = open(input_fifo, O_RDONLY);
+		int input = open((char*)ctx, O_RDONLY);
 		if(input <= 0)
 			die("open " input_fifo);
 
@@ -104,9 +105,9 @@ static void handle_input(int fd){
 	}
 }
 
-static void handle_output(int fd) {
+static void handle_output(int fd, void *ctx) {
 	while(1) {
-		int output = open(output_fifo, O_WRONLY);
+		int output = open((char*)ctx, O_WRONLY);
 		if(output <= 0)
 			die("open " output_fifo);
 
@@ -141,8 +142,8 @@ int main(int argc, char **argv){
 
 	StreamSet program_streams = meanwhile(&execute, (void*)args);
 	handle_streams(program_streams, (StreamActions){
-		.in = &handle_input,
-		.out = &handle_output
+		.in = &handle_input, .in_ctx = input_fifo,
+		.out = &handle_output, .out_ctx = output_fifo
 	});
 
 	return 0;
