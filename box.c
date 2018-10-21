@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -23,12 +24,32 @@ static void cleanup(int signal) {
 	exit(0);
 }
 
+/* Dear reader, this solution COULD cause lead to some nasty
+   situations if there are more than one breakable pipe per
+   process. Now I use fork() so I'm rather safe, because every
+   named pipe is handled in separate file. If I'd switch to
+   threads it could lead to some nasty conditions. :-D */
+bool pipbrk = false;
+static void brk_pipe_handler(int signal) {
+	pipbrk = true;
+}
+
 static void forward_stream(int in, int out) {
-	char buff[0x100];
+	static char buff[0x100];
+	static size_t buff_fill = 0;
 	size_t in_size;
 
-	while((in_size = read(in, buff, 0x100))>0)
-		write(out, buff, in_size);
+	if(buff_fill > 0)
+		write(out, buff, buff_fill);
+
+	while((in_size = read(in, buff, 0x100))>0) {
+		size_t ws = write(out, buff, in_size);
+		if(pipbrk || ws<in_size) {
+			buff_fill = in_size;
+			pipbrk = false;
+			break;
+		}
+	}
 }
 
 typedef struct {
@@ -139,12 +160,16 @@ static void handle_output(int fd, void *ctx) {
 	}
 }
 
+#define Signal_Handler(Sig, Handler) { \
+	struct sigaction __act = (struct sigaction) { \
+		.sa_handler = Handler \
+	}; \
+	sigaction(Sig, &__act, 0); \
+}
+
 int main(int argc, char **argv){
-	struct sigaction act = (struct sigaction) {
-		.sa_handler = &cleanup
-	};
-	sigaction(SIGINT, &act,0);
-	signal(SIGPIPE, SIG_IGN);
+	Signal_Handler(SIGINT, &cleanup);
+	Signal_Handler(SIGPIPE, &brk_pipe_handler);
 
 	if(argc < 2) {
 		fprintf(stderr,
