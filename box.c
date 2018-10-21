@@ -15,11 +15,20 @@
 #define input_fifo "box.in"
 #define output_fifo "box.out"
 
-void cleanup(int signal) {
+static void cleanup(int signal) {
 	unlink(input_fifo);
 	unlink(output_fifo);
 	exit(0);
 }
+
+static void forward_stream(int in, int out) {
+	char buff[0x100];
+	size_t in_size;
+
+	while((in_size = read(in, buff, 0x100))>0)
+		write(out, buff, in_size);
+}
+
 int main(int argc, char **argv){
 	struct sigaction act = (struct sigaction) {
 		.sa_handler = &cleanup
@@ -81,11 +90,7 @@ int main(int argc, char **argv){
 			if(output <= 0)
 				die("open " output_fifo);
 
-			char buff[0x100];
-			size_t in_size;
-
-			while((in_size = read(output_pipe[0], buff, 0x100))>0)
-				write(output, buff, in_size);
+			forward_stream(output_pipe[0], output);
 
 			close(output);
 		}
@@ -99,10 +104,7 @@ int main(int argc, char **argv){
 		if(input <= 0)
 			die("open " input_fifo);
 
-		char buff[0x100];
-		size_t in_size;
-		while((in_size = read(input, buff, 0xff)) > 0)
-			write(input_pipe[1], buff, in_size);
+		forward_stream(input, input_pipe[1]);
 
 		close(input);
 	}
