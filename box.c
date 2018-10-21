@@ -65,12 +65,55 @@ static StreamSet meanwhile(void (*f)(void*), void *ctx) {
 	};
 }
 
-void execute(void *_args) {
+typedef void (*StreamAct)(int);
+typedef struct {
+	StreamAct in, out;
+} StreamActions;
+
+static void handle_streams(StreamSet streams, StreamActions actions) {
+	pid_t writer_pid = fork();
+	if(writer_pid < 0)
+		die("fork")
+	else if(writer_pid == 0) {
+		close(streams.in);
+		actions.out(streams.out);
+		exit(0);
+	}
+
+	close(streams.out);
+	actions.in(streams.in);
+}
+
+static void execute(void *_args) {
 	char **args = (char**) _args;
 
 	execvp(args[0], args);
 	fprintf(stderr, "box: cannot run %s\n", args[0]);
 	exit(1);
+}
+
+static void handle_input(int fd){
+	while(1) {
+		int input = open(input_fifo, O_RDONLY);
+		if(input <= 0)
+			die("open " input_fifo);
+
+		forward_stream(input, fd);
+
+		close(input);
+	}
+}
+
+static void handle_output(int fd) {
+	while(1) {
+		int output = open(output_fifo, O_WRONLY);
+		if(output <= 0)
+			die("open " output_fifo);
+
+		forward_stream(fd, output);
+
+		close(output);
+	}
 }
 
 int main(int argc, char **argv){
@@ -97,35 +140,10 @@ int main(int argc, char **argv){
 		die("mkfifo " output_fifo);
 
 	StreamSet program_streams = meanwhile(&execute, (void*)args);
-
-	pid_t writer_pid = fork();
-	if(writer_pid < 0)
-		die("fork")
-	else if(writer_pid == 0) {
-		close(program_streams.in);
-
-		while(1) {
-			int output = open(output_fifo, O_WRONLY);
-			if(output <= 0)
-				die("open " output_fifo);
-
-			forward_stream(program_streams.out, output);
-
-			close(output);
-		}
-		exit(1);
-	}
-
-	close(program_streams.out);
-	while(1) {
-		int input = open(input_fifo, O_RDONLY);
-		if(input <= 0)
-			die("open " input_fifo);
-
-		forward_stream(input, program_streams.in);
-
-		close(input);
-	}
+	handle_streams(program_streams, (StreamActions){
+		.in = &handle_input,
+		.out = &handle_output
+	});
 
 	return 0;
 }
