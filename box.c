@@ -29,6 +29,50 @@ static void forward_stream(int in, int out) {
 		write(out, buff, in_size);
 }
 
+typedef struct {
+	int in,out;
+} StreamSet;
+
+static StreamSet meanwhile(void (*f)(void*), void *ctx) {
+	int input_pipe[2];
+	if(pipe(input_pipe) != 0)
+		die("pipe");
+
+	int output_pipe[2];
+	if(pipe(output_pipe) != 0)
+		die("pipe");
+
+	pid_t sbt_pid = fork();
+	if(sbt_pid < 0)
+		die("fork")
+
+	else if(sbt_pid == 0) {
+		close(input_pipe[1]);
+		close(output_pipe[0]);
+		dup2(input_pipe[0], STDIN_FILENO);
+		dup2(output_pipe[1], STDOUT_FILENO);
+
+		f(ctx);
+		exit(0);
+	}
+
+	close(input_pipe[0]);
+	close(output_pipe[1]);
+
+	return (StreamSet) {
+		.in = input_pipe[1],
+		.out = output_pipe[0]
+	};
+}
+
+void execute(void *_args) {
+	char **args = (char**) _args;
+
+	execvp(args[0], args);
+	fprintf(stderr, "box: cannot run %s\n", args[0]);
+	exit(1);
+}
+
 int main(int argc, char **argv){
 	struct sigaction act = (struct sigaction) {
 		.sa_handler = &cleanup
@@ -52,59 +96,33 @@ int main(int argc, char **argv){
 	if(mkfifo(output_fifo, 0660)!=0)
 		die("mkfifo " output_fifo);
 
-
-	int input_pipe[2];
-	if(pipe(input_pipe) != 0)
-		die("pipe");
-
-	int output_pipe[2];
-	if(pipe(output_pipe) != 0)
-		die("pipe");
-
-
-	pid_t sbt_pid = fork();
-	if(sbt_pid < 0)
-		die("fork")
-
-	else if(sbt_pid == 0) {
-		close(input_pipe[1]);
-		close(output_pipe[0]);
-		dup2(input_pipe[0], STDIN_FILENO);
-		dup2(output_pipe[1], STDOUT_FILENO);
-
-		execvp(args[0], args);
-		fprintf(stderr, "box: cannot run %s\n", args[0]);
-		exit(1);
-	}
+	StreamSet program_streams = meanwhile(&execute, (void*)args);
 
 	pid_t writer_pid = fork();
 	if(writer_pid < 0)
 		die("fork")
 	else if(writer_pid == 0) {
-		close(input_pipe[0]);
-		close(input_pipe[1]);
-		close(output_pipe[1]);
+		close(program_streams.in);
 
 		while(1) {
 			int output = open(output_fifo, O_WRONLY);
 			if(output <= 0)
 				die("open " output_fifo);
 
-			forward_stream(output_pipe[0], output);
+			forward_stream(program_streams.out, output);
 
 			close(output);
 		}
+		exit(1);
 	}
-	close(input_pipe[0]);
-	close(output_pipe[0]);
-	close(output_pipe[1]);
 
+	close(program_streams.out);
 	while(1) {
 		int input = open(input_fifo, O_RDONLY);
 		if(input <= 0)
 			die("open " input_fifo);
 
-		forward_stream(input, input_pipe[1]);
+		forward_stream(input, program_streams.in);
 
 		close(input);
 	}
