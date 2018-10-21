@@ -144,6 +144,7 @@ int main(int argc, char **argv){
 		.sa_handler = &cleanup
 	};
 	sigaction(SIGINT, &act,0);
+	signal(SIGPIPE, SIG_IGN);
 
 	if(argc < 2) {
 		fprintf(stderr,
