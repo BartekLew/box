@@ -14,10 +14,12 @@
 
 #define input_fifo "box.in"
 #define output_fifo "box.out"
+#define error_fifo "box.err"
 
 static void cleanup(int signal) {
 	unlink(input_fifo);
 	unlink(output_fifo);
+	unlink(error_fifo);
 	exit(0);
 }
 
@@ -30,7 +32,7 @@ static void forward_stream(int in, int out) {
 }
 
 typedef struct {
-	int in,out;
+	int in,out, err;
 } StreamSet;
 
 static StreamSet meanwhile(void (*f)(void*), void *ctx) {
@@ -42,15 +44,21 @@ static StreamSet meanwhile(void (*f)(void*), void *ctx) {
 	if(pipe(output_pipe) != 0)
 		die("pipe");
 
-	pid_t sbt_pid = fork();
-	if(sbt_pid < 0)
+	int error_pipe[2];
+	if(pipe(error_pipe) != 0)
+		die("pipe");
+
+	pid_t prog_pid = fork();
+	if(prog_pid < 0)
 		die("fork")
 
-	else if(sbt_pid == 0) {
+	else if(prog_pid == 0) {
 		close(input_pipe[1]);
 		close(output_pipe[0]);
+		close(error_pipe[0]);
 		dup2(input_pipe[0], STDIN_FILENO);
 		dup2(output_pipe[1], STDOUT_FILENO);
+		dup2(error_pipe[1], STDERR_FILENO);
 
 		f(ctx);
 		exit(0);
@@ -58,17 +66,19 @@ static StreamSet meanwhile(void (*f)(void*), void *ctx) {
 
 	close(input_pipe[0]);
 	close(output_pipe[1]);
+	close(error_pipe[1]);
 
 	return (StreamSet) {
 		.in = input_pipe[1],
-		.out = output_pipe[0]
+		.out = output_pipe[0],
+		.err = error_pipe[0]
 	};
 }
 
 typedef void (*StreamAct)(int, void*);
 typedef struct {
-	StreamAct in, out;
-	void *in_ctx, *out_ctx;
+	StreamAct in, out, err;
+	void *in_ctx, *out_ctx, *err_ctx;
 } StreamActions;
 
 static void handle_streams(StreamSet streams, StreamActions actions) {
@@ -77,11 +87,23 @@ static void handle_streams(StreamSet streams, StreamActions actions) {
 		die("fork")
 	else if(writer_pid == 0) {
 		close(streams.in);
+		close(streams.err);
 		actions.out(streams.out, actions.out_ctx);
 		exit(0);
 	}
 
+	pid_t writer_err_pid = fork();
+	if(writer_err_pid < 0)
+		die("fork")
+	else if(writer_err_pid == 0) {
+		close(streams.in);
+		close(streams.out);
+		actions.err(streams.err, actions.err_ctx);
+		exit(0);
+	}
+
 	close(streams.out);
+	close(streams.err);
 	actions.in(streams.in, actions.in_ctx);
 }
 
@@ -139,11 +161,14 @@ int main(int argc, char **argv){
 		die("mkfifo " input_fifo);
 	if(mkfifo(output_fifo, 0660)!=0)
 		die("mkfifo " output_fifo);
+	if(mkfifo(error_fifo, 0660)!=0)
+		die("mkfifo " error_fifo);
 
 	StreamSet program_streams = meanwhile(&execute, (void*)args);
 	handle_streams(program_streams, (StreamActions){
 		.in = &handle_input, .in_ctx = input_fifo,
-		.out = &handle_output, .out_ctx = output_fifo
+		.out = &handle_output, .out_ctx = output_fifo,
+		.err = &handle_output, .err_ctx = error_fifo
 	});
 
 	return 0;
