@@ -103,29 +103,23 @@ typedef struct {
 } StreamActions;
 
 static void handle_streams(StreamSet streams, StreamActions actions) {
-	pid_t writer_pid = fork();
-	if(writer_pid < 0)
-		die("fork")
-	else if(writer_pid == 0) {
-		close(streams.in);
-		close(streams.err);
-		actions.out(streams.out, actions.out_ctx);
-		exit(0);
-	}
+	StreamAct acts[3] = {actions.out, actions.err, actions.in};
+	void      *ctxs[3] = {actions.out_ctx, actions.err_ctx, actions.in_ctx};
+	int	  fds[3] = {streams.out, streams.err, streams.in};
+	pid_t	  pids[3];
 
-	pid_t writer_err_pid = fork();
-	if(writer_err_pid < 0)
-		die("fork")
-	else if(writer_err_pid == 0) {
-		close(streams.in);
-		close(streams.out);
-		actions.err(streams.err, actions.err_ctx);
-		exit(0);
-	}
+	for(uint i = 0; i < 3; i++) {
+		pids[i] = fork();
+		if(pids[i] < 0)
+			die("fork failed")
+		else if(pids[i] == 0) {
+			for(uint j = 0; j < 3; j++)
+				if(j!=i) close(fds[j]);
 
-	close(streams.out);
-	close(streams.err);
-	actions.in(streams.in, actions.in_ctx);
+			acts[i](fds[i], ctxs[i]);
+			exit(0);
+		}
+	}
 }
 
 static void execute(void *_args) {
