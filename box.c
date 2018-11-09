@@ -177,12 +177,11 @@ int main(int argc, char **argv){
 	for(uint i = 0; i < argc-1; i++) args[i] = argv[i+1];
 	args[argc-1] = NULL;
 
-	if(mkfifo(input_fifo, 0660)!=0)
-		die("mkfifo " input_fifo);
-	if(mkfifo(output_fifo, 0660)!=0)
-		die("mkfifo " output_fifo);
-	if(mkfifo(error_fifo, 0660)!=0)
-		die("mkfifo " error_fifo);
+	// Intentionally skip testing result so that I can have existing file to be
+	// used as input, output or error.
+	mkfifo(input_fifo, 0660);
+	mkfifo(output_fifo, 0660);
+	mkfifo(error_fifo, 0660);
 
 	StreamSet program_streams = meanwhile(&execute, (void*)args);
 	handle_streams(program_streams, (StreamActions){
