@@ -34,22 +34,40 @@ static void brk_pipe_handler(int signal) {
 	pipbrk = true;
 }
 
-static void forward_stream(int in, int out) {
+typedef struct {
+	bool read_break, write_break;
+} ForwardResult;
+ 
+static ForwardResult forward_stream(int in, int out) {
 	static char buff[0x100];
 	static size_t buff_fill = 0;
 	size_t in_size;
 
+	pipbrk = false;
+
 	if(buff_fill > 0)
 		write(out, buff, buff_fill);
 
+	if (pipbrk) {
+		pipbrk = false;
+		return (ForwardResult){.write_break = true};
+	}
+
 	while((in_size = read(in, buff, 0x100))>0) {
-		size_t ws = write(out, buff, in_size);
-		if(pipbrk || ws<in_size) {
+		if (pipbrk) {
+			pipbrk = false;
+			return (ForwardResult){.read_break = true};
+		}
+
+		write(out, buff, in_size);
+		if(pipbrk) {
 			buff_fill = in_size;
 			pipbrk = false;
-			break;
+			return (ForwardResult){.write_break = true};
 		}
 	}
+
+	return (ForwardResult){.read_break = false, .write_break = false};
 }
 
 typedef struct {
@@ -136,7 +154,10 @@ static void handle_input(int fd, void *ctx){
 		if(input <= 0)
 			die("open " input_fifo);
 
-		forward_stream(input, fd);
+		if(forward_stream(input, fd).write_break){
+			fprintf(stderr, "box/input: write break\n");
+			exit(1);
+		}
 
 		close(input);
 	}
@@ -148,7 +169,10 @@ static void handle_output(int fd, void *ctx) {
 		if(output <= 0)
 			die("open " output_fifo);
 
-		forward_stream(fd, output);
+		if(forward_stream(fd, output).read_break){
+			fprintf(stderr, "box/output: read break\n");
+			exit(1);
+		}
 
 		close(output);
 	}
