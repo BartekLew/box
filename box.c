@@ -189,6 +189,8 @@ static void handle_output(int fd, void *ctx, int pids[]) {
 
 int main(int argc, char **argv){
 	Signal_Handler(SIGINT, &cleanup);
+	Signal_Handler(SIGTERM, &cleanup);
+	Signal_Handler(SIGKILL, &cleanup);
 	Signal_Handler(SIGPIPE, &brk_pipe_handler);
 
 	if(argc < 2) {
