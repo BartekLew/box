@@ -114,7 +114,7 @@ static StreamSet meanwhile(void (*f)(void*), void *ctx) {
 	};
 }
 
-typedef void (*StreamAct)(int, void*);
+typedef void (*StreamAct)(int, void*, int pids[]);
 typedef struct {
 	StreamAct in, out, err;
 	void *in_ctx, *out_ctx, *err_ctx;
@@ -134,7 +134,7 @@ static void handle_streams(StreamSet streams, StreamActions actions) {
 			for(uint j = 0; j < 3; j++)
 				if(j!=i) close(fds[j]);
 
-			acts[i](fds[i], ctxs[i]);
+			acts[i](fds[i], ctxs[i], pids);
 			exit(0);
 		}
 	}
@@ -148,22 +148,24 @@ static void execute(void *_args) {
 	exit(1);
 }
 
-static void handle_input(int fd, void *ctx){
+static void handle_input(int fd, void *ctx, int pids[]){
 	while(1) {
 		int input = open((char*)ctx, O_RDONLY);
 		if(input <= 0)
 			die("open " input_fifo);
 
 		if(forward_stream(input, fd).write_break){
-			fprintf(stderr, "box/input: write break\n");
-			exit(1);
+			for(int i = 0; i < 2; i++) {
+				kill(pids[i], SIGTERM);
+			}
+			cleanup(0);
 		}
 
 		close(input);
 	}
 }
 
-static void handle_output(int fd, void *ctx) {
+static void handle_output(int fd, void *ctx, int pids[]) {
 	while(1) {
 		int output = open((char*)ctx, O_WRONLY);
 		if(output <= 0)
