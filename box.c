@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <fcntl.h>
 #include <poll.h>
@@ -14,11 +15,13 @@
 	exit(1); \
 }
 
+#define ctl_fifo "box.ctl"
 #define input_fifo "box.in"
 #define output_fifo "box.out"
 #define error_fifo "box.err"
 
 static void cleanup(int signal) {
+	unlink(ctl_fifo);
 	unlink(input_fifo);
 	unlink(output_fifo);
 	unlink(error_fifo);
@@ -26,7 +29,8 @@ static void cleanup(int signal) {
 }
 
 typedef struct {
-	int in,out, err;
+	int	in,out, err;
+	pid_t	pid;
 } StreamSet;
 
 static StreamSet meanwhile(void (*f)(void*), void *ctx) {
@@ -65,39 +69,77 @@ static StreamSet meanwhile(void (*f)(void*), void *ctx) {
 	return (StreamSet) {
 		.in = input_pipe[1],
 		.out = output_pipe[0],
-		.err = error_pipe[0]
+		.err = error_pipe[0],
+		.pid = prog_pid
 	};
 }
 
 typedef void (*StreamAct)(int, void*, int pids[]);
 typedef struct {
-	char *in, *out, *err;
+	char *in, *out, *err, *ctl;
 } StreamFiles;
+
+typedef struct {
+	char	*name;
+	size_t	len;
+	void	(*action)(StreamSet, struct pollfd *pollfd);
+} CtlCmd;
+
+void cmd_term(StreamSet streams, struct pollfd* pollfd) {
+	kill(streams.pid, SIGKILL);
+	cleanup(0);
+	exit(0);
+}
+
+void cmd_cls(StreamSet streams, struct pollfd* pollfd) {
+	ftruncate(pollfd[4].fd, 0);
+	ftruncate(pollfd[5].fd, 0);
+}
+
+CtlCmd ctl_commands[] = {
+	{ .name = "k", .len = 1, .action = &cmd_term },
+	{ .name = "c", .len = 1, .action = &cmd_cls }
+};
 
 static void handle_streams(StreamSet streams, StreamFiles files) {
 	if(fork() != 0) return;
 
 	static char buff[0xfff];
-	struct pollfd poll_data[6] = {
+	struct pollfd poll_data[7] = {
 		{ .fd = open(files.in, O_RDWR, 0),	.events = POLLIN },
 		{ .fd = streams.out,			.events = POLLIN },
 		{ .fd = streams.err,			.events = POLLIN },
 
 		{ .fd = streams.in,			.events = POLLOUT },
 		{ .fd = open(files.out, O_RDWR, 0),	.events = POLLOUT },
-		{ .fd = open(files.err, O_RDWR, 0),	.events = POLLOUT }
+		{ .fd = open(files.err, O_RDWR, 0),	.events = POLLOUT },
+
+		{ .fd = open(files.ctl, O_RDWR, 0),	.events = POLLIN }
 
 		// I use O_RDWR to avoid blocking on opening named pipe
 		// Poll will let to read/write to them until buffer is full
 	};
 
-	for(uint i = 0; i < 6; i++)
+	for(uint i = 0; i < 7; i++)
 		if(poll_data[i].fd < 0) {
 			fprintf(stderr, "box: cannot open stream %d.\n", i);
 			exit(1);
 		}
 
-	while(poll(poll_data, 6, 0) > 0) {
+	while(poll(poll_data, 7, 0) > 0) {
+		if(poll_data[6].revents & POLLIN) {
+			int bytes = read(poll_data[6].fd, buff, 0xfff);
+			for (uint i = 0; i < bytes; i++) {
+				for(uint j=0; j<2; j++) {
+					CtlCmd *cmd = ctl_commands+j;
+					if(strncmp(buff+i, cmd->name, cmd->len) == 0) {
+						cmd->action(streams, poll_data);
+						i += cmd->len;
+					}
+				}
+			}
+		}
+
 		for (uint i = 0; i < 3; i++) {
 			if(poll_data[i].revents & POLLIN && poll_data[i+3].revents & POLLOUT) {
 				int bytes = read(poll_data[i].fd, buff, 0xfff);
@@ -146,6 +188,10 @@ int main(int argc, char **argv){
 	for(uint i = 0; i < argc-1; i++) args[i] = argv[i+1];
 	args[argc-1] = NULL;
 
+	//ctl_fifo mustn`t be a file!
+	unlink(ctl_fifo);
+	mkfifo(ctl_fifo, 0660);
+
 	// Intentionally skip testing result so that I can have existing file to be
 	// used as input, output or error.
 	mkfifo(input_fifo, 0660);
@@ -154,7 +200,7 @@ int main(int argc, char **argv){
 
 	StreamSet program_streams = meanwhile(&execute, (void*)args);
 	handle_streams(program_streams, (StreamFiles){
-		.in = input_fifo, .out = output_fifo, .err = error_fifo
+		.in = input_fifo, .out = output_fifo, .err = error_fifo, .ctl = ctl_fifo
 	});
 
 	return 0;
