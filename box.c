@@ -106,15 +106,15 @@ static void handle_streams(StreamSet streams, StreamFiles files) {
 
 	static char buff[0xfff];
 	struct pollfd poll_data[7] = {
+		{ .fd = open(files.ctl, O_RDWR, 0),	.events = POLLIN },
+
 		{ .fd = open(files.in, O_RDWR, 0),	.events = POLLIN },
 		{ .fd = streams.out,			.events = POLLIN },
 		{ .fd = streams.err,			.events = POLLIN },
 
 		{ .fd = streams.in,			.events = POLLOUT },
 		{ .fd = open(files.out, O_RDWR, 0),	.events = POLLOUT },
-		{ .fd = open(files.err, O_RDWR, 0),	.events = POLLOUT },
-
-		{ .fd = open(files.ctl, O_RDWR, 0),	.events = POLLIN }
+		{ .fd = open(files.err, O_RDWR, 0),	.events = POLLOUT }
 
 		// I use O_RDWR to avoid blocking on opening named pipe
 		// Poll will let to read/write to them until buffer is full
@@ -123,11 +123,12 @@ static void handle_streams(StreamSet streams, StreamFiles files) {
 	for(uint i = 0; i < 7; i++)
 		if(poll_data[i].fd < 0) {
 			fprintf(stderr, "box: cannot open stream %d.\n", i);
+			perror("box/open");
 			exit(1);
 		}
 
-	while(poll(poll_data, 7, 0) > 0) {
-		if(poll_data[6].revents & POLLIN) {
+	while(poll(poll_data, 4, -1) > 0) {
+		if(poll_data[0].revents & POLLIN) {
 			int bytes = read(poll_data[6].fd, buff, 0xfff);
 			for (uint i = 0; i < bytes; i++) {
 				for(uint j=0; j<2; j++) {
@@ -140,16 +141,22 @@ static void handle_streams(StreamSet streams, StreamFiles files) {
 			}
 		}
 
-		for (uint i = 0; i < 3; i++) {
-			if(poll_data[i].revents & POLLIN && poll_data[i+3].revents & POLLOUT) {
-				int bytes = read(poll_data[i].fd, buff, 0xfff);
-				write(poll_data[i+3].fd, buff, bytes);
+		for (uint i = 1; i < 4; i++) {
+			poll_data[i+4].events = (poll_data[i].revents & POLLIN)?POLLOUT:0;
+		}
+		
+		if(poll(poll_data+4, 3, 4000) > 0) {
+			for (uint i = 1; i < 4; i++) {
+				if(poll_data[i+3].revents & POLLOUT) {
+					int bytes = read(poll_data[i].fd, buff, 0xfff);
+					write(poll_data[i+3].fd, buff, bytes);
+				}
 			}
 		}
 	}
 
 	perror("box/poll");
-	fprintf(stderr, "box: terminated");
+	fprintf(stderr, "box: terminated\n");
 	
 	for(uint i = 0; i < 6; i++) {
 		close(poll_data[i].fd);
