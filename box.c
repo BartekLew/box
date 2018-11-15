@@ -92,8 +92,8 @@ void cmd_term(StreamSet streams, struct pollfd* pollfd) {
 }
 
 void cmd_cls(StreamSet streams, struct pollfd* pollfd) {
-	ftruncate(pollfd[4].fd, 0);
 	ftruncate(pollfd[5].fd, 0);
+	ftruncate(pollfd[6].fd, 0);
 }
 
 CtlCmd ctl_commands[] = {
@@ -129,7 +129,7 @@ static void handle_streams(StreamSet streams, StreamFiles files) {
 
 	while(poll(poll_data, 4, -1) > 0) {
 		if(poll_data[0].revents & POLLIN) {
-			int bytes = read(poll_data[6].fd, buff, 0xfff);
+			int bytes = read(poll_data[0].fd, buff, 0xfff);
 			for (uint i = 0; i < bytes; i++) {
 				for(uint j=0; j<2; j++) {
 					CtlCmd *cmd = ctl_commands+j;
@@ -142,7 +142,7 @@ static void handle_streams(StreamSet streams, StreamFiles files) {
 		}
 
 		for (uint i = 1; i < 4; i++) {
-			poll_data[i+4].events = (poll_data[i].revents & POLLIN)?POLLOUT:0;
+			poll_data[i+3].events = (poll_data[i].revents & POLLIN)?POLLOUT:0;
 		}
 		
 		if(poll(poll_data+4, 3, 4000) > 0) {
