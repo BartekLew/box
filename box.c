@@ -93,7 +93,9 @@ void cmd_term(StreamSet streams, struct pollfd* pollfd) {
 
 void cmd_cls(StreamSet streams, struct pollfd* pollfd) {
 	ftruncate(pollfd[5].fd, 0);
+	lseek(pollfd[5].fd, 0, SEEK_SET);
 	ftruncate(pollfd[6].fd, 0);
+	lseek(pollfd[6].fd, 0, SEEK_SET);
 }
 
 CtlCmd ctl_commands[] = {
