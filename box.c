@@ -15,10 +15,12 @@
 	exit(1); \
 }
 
-#define ctl_fifo "box.ctl"
-#define input_fifo "box.in"
-#define output_fifo "box.out"
-#define error_fifo "box.err"
+#define NAME_MAX 0xf0
+
+char ctl_fifo[NAME_MAX]= "box.ctl";
+char input_fifo[NAME_MAX] = "box.in";
+char output_fifo[NAME_MAX] = "box.out";
+char error_fifo[NAME_MAX] = "box.err";
 
 static void cleanup(int signal) {
 	unlink(ctl_fifo);
@@ -180,22 +182,45 @@ static void execute(void *_args) {
 	sigaction(Sig, &__act, 0); \
 }
 
+void wrong_usage() {
+	fprintf(stderr,
+		"box: run program with stdI/O through FIFO\n"
+		"  USAGE: box [-nname] executable [args...]\n"
+		"	-n<name> change i/o files names. eg:\n"
+		"		box -nfoo sh\n"
+		"	  default is box. Extensions are added to each\n"
+	);
+	exit(1);
+}
+
 int main(int argc, char **argv){
 	Signal_Handler(SIGINT, &cleanup);
 	Signal_Handler(SIGTERM, &cleanup);
 	Signal_Handler(SIGKILL, &cleanup);
 
 	if(argc < 2) {
-		fprintf(stderr,
-			"box: run program with stdI/O through FIFO\n"
-			"  USAGE: box executable [args...]\n"
-		);
-		exit(1);
+		wrong_usage();
 	}
 
-	char *args[argc];
-	for(uint i = 0; i < argc-1; i++) args[i] = argv[i+1];
-	args[argc-1] = NULL;
+	uint i = 1;
+	while(argv[i][0] == '-') {
+		if(argv[i][1] == 'n') {
+			char *name = argv[i]+2;
+			sprintf(input_fifo, "%s.in", name);
+			sprintf(output_fifo, "%s.out", name);
+			sprintf(error_fifo, "%s.err", name);
+			sprintf(ctl_fifo, "%s.ctl", name);
+		} else {
+			fprintf(stderr, "wrong argument: %s\n", argv[i]);
+			wrong_usage();
+		}
+		i++;
+	}
+
+	char *args[argc - i + 1];
+	uint j;
+	for(j = 0; i+j < argc; j++) args[j] = argv[i+j];
+	args[j] = NULL;
 
 	//ctl_fifo mustn`t be a file!
 	unlink(ctl_fifo);
